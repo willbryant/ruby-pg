@@ -305,15 +305,19 @@ describe PG::Connection do
 		res = nil
 		@conn.exec( "CREATE TABLE pie ( flavor TEXT )" )
 
-		expect {
-			res = @conn.transaction do
-				@conn.exec( "INSERT INTO pie VALUES ('rhubarb'), ('cherry'), ('schizophrenia')" )
-				raise "Oh noes! All pie is gone!"
-			end
-		}.to raise_exception( RuntimeError, /all pie is gone/i )
+		begin
+			expect {
+				res = @conn.transaction do
+					@conn.exec( "INSERT INTO pie VALUES ('rhubarb'), ('cherry'), ('schizophrenia')" )
+					raise "Oh noes! All pie is gone!"
+				end
+			}.to raise_exception( RuntimeError, /all pie is gone/i )
 
-		res = @conn.exec( "SELECT * FROM pie" )
-		res.ntuples.should == 0
+			res = @conn.exec( "SELECT * FROM pie" )
+			res.ntuples.should == 0
+		ensure
+			@conn.exec( "DROP TABLE pie" )
+		end
 	end
 
 	it "returns the block result from Connection#transaction" do
@@ -357,7 +361,6 @@ describe PG::Connection do
 		res = @conn.exec_params( "SELECT name FROM students WHERE age >= $1", [6] )
 		res.values.should == [ ['Wally'], ['Sally'] ]
 	end
-
 
 	it "can wait for NOTIFY events" do
 		@conn.exec( 'ROLLBACK' )
@@ -512,7 +515,7 @@ describe PG::Connection do
 		verify_clean_exec_status
 	end
 
-	it "can handle server errors in #copy_data for output" do
+	it "can handle server errors in #copy_data for output", :postgresql_90 do
 		@conn.exec "ROLLBACK"
 		@conn.transaction do
 			@conn.exec( "CREATE FUNCTION errfunc() RETURNS int AS $$ BEGIN RAISE 'test-error'; END; $$ LANGUAGE plpgsql;" )
@@ -1114,6 +1117,7 @@ describe PG::Connection do
 					res = conn.exec( "SELECT foo FROM defaultinternaltest" )
 					res[0]['foo'].encoding.should == Encoding::UTF_8
 				ensure
+					conn.exec( "DROP TABLE defaultinternaltest" )
 					conn.finish if conn
 					Encoding.default_internal = prev_encoding
 				end
@@ -1241,6 +1245,43 @@ describe PG::Connection do
 			t.should be_alive()
 			serv.close
 			t.join
+		end
+	end
+
+	describe "type casting" do
+		it "should raise an error on invalid param mapping" do
+			expect{
+				@conn.exec_params( "SELECT 1", [], nil, :invalid )
+			}.to raise_error(NoMethodError)
+		end
+
+		it "should return nil if no type mapping is set" do
+			@conn.type_mapping.should == nil
+		end
+
+		it "shouldn't type map params unless requested" do
+			expect{
+				@conn.exec_params( "SELECT $1", [5] )
+			}.to raise_error(PG::IndeterminateDatatype)
+		end
+
+		context "with default type map" do
+			before :each do
+				@conn2 = described_class.new(@conninfo)
+				@conn2.type_mapping = PG::BasicTypeMapping.new @conn2
+			end
+			after :each do
+				@conn2.close
+			end
+
+			it "should respect a type mapping for params and result" do
+				res = @conn2.exec_params( "SELECT $1", [5] )
+				res.values.should == [[5]]
+			end
+
+			it "should return the current type mapping" do
+				@conn2.type_mapping.should be_kind_of(PG::BasicTypeMapping)
+			end
 		end
 	end
 end

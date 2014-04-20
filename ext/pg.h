@@ -101,6 +101,34 @@ __declspec(dllexport)
 typedef long suseconds_t;
 #endif
 
+typedef struct pg_type t_pg_type;
+typedef int (* t_pg_type_enc_func)(t_pg_type *, VALUE, char *, VALUE *);
+typedef VALUE (* t_pg_type_dec_func)(t_pg_type *, char *, int, int, int, int);
+
+struct pg_type {
+	t_pg_type_enc_func enc_func;
+	t_pg_type_dec_func dec_func;
+	VALUE enc_obj;
+	VALUE dec_obj;
+	Oid oid;
+	int format;
+};
+
+typedef struct {
+	t_pg_type comp;
+	t_pg_type *elem;
+	int needs_quotation;
+} t_pg_composite_type;
+
+typedef struct {
+	int nfields;
+	int encoding_index;
+	struct pg_colmap_converter {
+		t_pg_type *cconv;
+	} convs[0];
+} t_colmap;
+
+
 #include "gvl_wrappers.h"
 
 /***************************************************************************
@@ -116,6 +144,9 @@ extern VALUE rb_mPGconstants;
 extern VALUE rb_cPGconn;
 extern VALUE rb_cPGresult;
 extern VALUE rb_hErrors;
+extern VALUE rb_cColumnMap;
+extern VALUE rb_cPG_Type;
+extern VALUE rb_cPG_Coder;
 
 
 /***************************************************************************
@@ -134,11 +165,24 @@ void Init_pg_ext                                       _(( void ));
 void init_pg_connection                                _(( void ));
 void init_pg_result                                    _(( void ));
 void init_pg_errors                                    _(( void ));
-VALUE lookup_error_class                               _(( const char *sqlstate ));
+void init_pg_column_mapping                            _(( void ));
+void init_pg_type                                      _(( void ));
+void init_pg_coder                                     _(( void ));
+void init_pg_text_encoder                              _(( void ));
+void init_pg_text_decoder                              _(( void ));
+void init_pg_binary_encoder                            _(( void ));
+void init_pg_binary_decoder                            _(( void ));
+VALUE lookup_error_class                               _(( const char * ));
+t_colmap *colmap_get_and_check                         _(( VALUE, int ));
+VALUE colmap_result_value                              _(( VALUE, PGresult *, int, int, t_colmap * ));
+VALUE pg_bin_dec_bytea                                 _(( t_pg_type*, char *, int, int, int, int ));
+VALUE pg_text_dec_string                               _(( t_pg_type*, char *, int, int, int, int ));
+void pg_define_coder                                   _(( const char *, void *, VALUE, VALUE ));
 
-PGconn *pg_get_pgconn	                               _(( VALUE ));
+PGconn *pg_get_pgconn	                                 _(( VALUE ));
 
 VALUE pg_new_result                                    _(( PGresult *, VALUE ));
+PGresult* pgresult_get                                 _(( VALUE ));
 VALUE pg_result_check                                  _(( VALUE ));
 VALUE pg_result_clear                                  _(( VALUE ));
 

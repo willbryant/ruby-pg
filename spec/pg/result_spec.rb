@@ -221,7 +221,7 @@ describe PG::Result do
 		@conn.exec( 'CREATE TABLE ftabletest ( foo text )' )
 		res = @conn.exec( 'SELECT * FROM ftabletest' )
 
-		res.ftable( 0 ).should == be_nonzero()
+		res.ftable( 0 ).should be_nonzero()
 	end
 
 	it "should raise an exception when an invalid index is passed to PG::Result#ftable" do
@@ -341,5 +341,58 @@ describe PG::Result do
 			error.should be_an_instance_of(PG::UnableToSend)
 			error.result.should == nil
 		}
+	end
+
+	context 'result value conversions with ColumnMapping' do
+		let!(:text_int_type) do
+			PG::SimpleType.new encoder: PG::TextEncoder::Integer,
+					decoder: PG::TextDecoder::Integer, name: 'INT4', oid: 23
+		end
+		let!(:text_float_type) do
+			PG::SimpleType.new encoder: PG::TextEncoder::Float,
+					decoder: PG::TextDecoder::Float, name: 'FLOAT4', oid: 700
+		end
+
+		it "should allow reading, assigning and diabling type conversions" do
+			res = @conn.exec( "SELECT 123" )
+			res.column_mapping.should be_nil
+			res.column_mapping = PG::ColumnMapping.new [text_int_type]
+			res.column_mapping.should be_an_instance_of(PG::ColumnMapping)
+			res.column_mapping.types.should == [text_int_type]
+			res.column_mapping = PG::ColumnMapping.new [text_float_type]
+			res.column_mapping.types.should == [text_float_type]
+			res.column_mapping = nil
+			res.column_mapping.should be_nil
+		end
+
+		it "should be applied to all value retrieving methods" do
+			res = @conn.exec( "SELECT 123 as f" )
+			res.column_mapping = PG::ColumnMapping.new [text_int_type]
+			res.values.should == [[123]]
+			res.getvalue(0,0).should == 123
+			res[0].should == {'f' => 123 }
+			res.enum_for(:each_row).to_a.should == [[123]]
+			res.enum_for(:each).to_a.should == [{'f' => 123}]
+		end
+
+		it "should be usable for several querys" do
+			colmap = PG::ColumnMapping.new [text_int_type]
+			res = @conn.exec( "SELECT 123" )
+			res.column_mapping = colmap
+			res.values.should == [[123]]
+			res = @conn.exec( "SELECT 456" )
+			res.column_mapping = colmap
+			res.values.should == [[456]]
+		end
+
+		it "shouldn't allow invalid column mappings" do
+			res = @conn.exec( "SELECT 1" )
+			expect{ res.column_mapping = 1 }.to raise_error(NoMethodError)
+		end
+
+		it "shouldn't allow column mappings with different number of fields" do
+			res = @conn.exec( "SELECT 1" )
+			expect{ res.column_mapping = PG::ColumnMapping.new([]) }.to raise_error(ArgumentError, /mapped columns/)
+		end
 	end
 end

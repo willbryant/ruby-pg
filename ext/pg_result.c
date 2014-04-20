@@ -10,7 +10,8 @@
 VALUE rb_cPGresult;
 
 static void pgresult_gc_free( PGresult * );
-static PGresult* pgresult_get( VALUE );
+static t_colmap *pgresult_get_colmap( VALUE );
+static VALUE pgresult_column_mapping_set2(PGresult *, VALUE, VALUE );
 
 
 /*
@@ -31,6 +32,10 @@ pg_new_result(PGresult *result, VALUE rb_pgconn)
 #endif
 
 	rb_iv_set( val, "@connection", rb_pgconn );
+	if( result ){
+		VALUE type_mapping = rb_iv_get(rb_pgconn, "@type_mapping");
+		pgresult_column_mapping_set2( result, val, type_mapping );
+	}
 
 	return val;
 }
@@ -140,7 +145,7 @@ pgresult_gc_free( PGresult *result )
 /*
  * Fetch the data pointer for the result object
  */
-static PGresult*
+PGresult*
 pgresult_get(VALUE self)
 {
 	PGresult *result;
@@ -515,30 +520,6 @@ pgresult_fsize(VALUE self, VALUE index)
 }
 
 
-static VALUE
-pgresult_value(VALUE self, PGresult *result, int tuple_num, int field_num)
-{
-    VALUE val;
-    if ( PQgetisnull(result, tuple_num, field_num) ) {
-        return Qnil;
-    }
-    else {
-        val = rb_tainted_str_new( PQgetvalue(result, tuple_num, field_num ),
-                                  PQgetlength(result, tuple_num, field_num) );
-
-#ifdef M17N_SUPPORTED
-        /* associate client encoding for text format only */
-        if ( 0 == PQfformat(result, field_num) ) {
-            ASSOCIATE_INDEX( val, self );
-        } else {
-            rb_enc_associate( val, rb_ascii8bit_encoding() );
-        }
-#endif
-
-        return val;
-    }
-}
-
 /*
  * call-seq:
  *    res.getvalue( tup_num, field_num )
@@ -552,6 +533,7 @@ pgresult_getvalue(VALUE self, VALUE tup_num, VALUE field_num)
 	PGresult *result;
 	int i = NUM2INT(tup_num);
 	int j = NUM2INT(field_num);
+	t_colmap *p_colmap = pgresult_get_colmap(self);
 
 	result = pgresult_get(self);
 	if(i < 0 || i >= PQntuples(result)) {
@@ -560,7 +542,7 @@ pgresult_getvalue(VALUE self, VALUE tup_num, VALUE field_num)
 	if(j < 0 || j >= PQnfields(result)) {
 		rb_raise(rb_eArgError,"invalid field number %d", j);
 	}
-	return pgresult_value(self, result, i, j);
+	return colmap_result_value(self, result, i, j, p_colmap);
 }
 
 /*
@@ -712,6 +694,7 @@ pgresult_aref(VALUE self, VALUE index)
 	int field_num;
 	VALUE fname;
 	VALUE tuple;
+	t_colmap *p_colmap = pgresult_get_colmap(self);
 
 	if ( tuple_num < 0 || tuple_num >= PQntuples(result) )
 		rb_raise( rb_eIndexError, "Index %d is out of range", tuple_num );
@@ -720,7 +703,7 @@ pgresult_aref(VALUE self, VALUE index)
 	for ( field_num = 0; field_num < PQnfields(result); field_num++ ) {
 		fname = rb_tainted_str_new2( PQfname(result,field_num) );
 		ASSOCIATE_INDEX(fname, self);
-		rb_hash_aset( tuple, fname, pgresult_value(self, result, tuple_num, field_num) );
+		rb_hash_aset( tuple, fname, colmap_result_value(self, result, tuple_num, field_num, p_colmap) );
 	}
 	return tuple;
 }
@@ -739,13 +722,14 @@ pgresult_each_row(VALUE self)
 	int field;
 	int num_rows = PQntuples(result);
 	int num_fields = PQnfields(result);
+	t_colmap *p_colmap = pgresult_get_colmap(self);
 
 	for ( row = 0; row < num_rows; row++ ) {
 		VALUE new_row = rb_ary_new2(num_fields);
 
 		/* populate the row */
 		for ( field = 0; field < num_fields; field++ ) {
-		    rb_ary_store( new_row, field, pgresult_value(self, result, row, field) );
+			rb_ary_store( new_row, field, colmap_result_value(self, result, row, field, p_colmap) );
 		}
 		rb_yield( new_row );
 	}
@@ -868,6 +852,54 @@ pgresult_fields(VALUE self)
 	return fields;
 }
 
+static VALUE
+pgresult_column_mapping_set2(PGresult *result, VALUE self, VALUE column_mapping)
+{
+	if( column_mapping != Qnil ){
+		t_colmap *p_colmap;
+		if ( !rb_obj_is_kind_of(column_mapping, rb_cColumnMap) ) {
+			column_mapping = rb_funcall( column_mapping, rb_intern("column_mapping_for_result"), 1, self );
+		}
+		p_colmap = colmap_get_and_check( column_mapping, PQnfields( result ));
+
+#ifdef M17N_SUPPORTED
+		p_colmap->encoding_index = ENCODING_GET(self);
+#endif
+	}
+	rb_iv_set( self, "@column_mapping", column_mapping );
+
+	return column_mapping;
+}
+
+/*
+ * call-seq:
+ *    res.column_mapping = value
+ *
+ * +value+ can be:
+ * * an instance of PG::ColumnMapping
+ * * +nil+ - disables custom type mapping.
+ *
+ */
+static VALUE
+pgresult_column_mapping_set(VALUE self, VALUE column_mapping)
+{
+	PGresult *result = pgresult_get(self);
+	return pgresult_column_mapping_set2( result, self, column_mapping );
+}
+
+static t_colmap *
+pgresult_get_colmap(VALUE self)
+{
+	VALUE column_mapping = rb_iv_get( self, "@column_mapping" );
+	if( column_mapping == Qnil ){
+		return NULL;
+	} else {
+		/* The type of @column_mapping is already checked when the
+		 * value is assigned. */
+		return DATA_PTR( column_mapping );
+	}
+}
+
 
 void
 init_pg_result()
@@ -915,6 +947,9 @@ init_pg_result()
 	rb_define_method(rb_cPGresult, "each_row", pgresult_each_row, 0);
 	rb_define_method(rb_cPGresult, "column_values", pgresult_column_values, 1);
 	rb_define_method(rb_cPGresult, "field_values", pgresult_field_values, 1);
+
+	rb_define_attr(rb_cPGresult, "column_mapping", 1, 0);
+	rb_define_method(rb_cPGresult, "column_mapping=", pgresult_column_mapping_set, 1);
 }
 
 

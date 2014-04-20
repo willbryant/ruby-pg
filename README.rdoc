@@ -64,6 +64,65 @@ There's also {a Google+ group}[http://goo.gl/TFy1U] and a
 want to chat about something.
 
 
+== Type Casts
+
+Pg can optionally type cast result and query parameters in Ruby or native
+C code. This can speed up data transfers to and from the database by
+avoiding String allocations for each value.
+
+Standard type casting can be enabled by:
+
+    conn.type_mapping = PG::BasicTypeMapping.new conn
+    # this works for result value mapping:
+    conn.exec("select 1, now(), '{2,3}'::int[]").values
+        # => [[1, 2014-04-17 22:58:01 +0200, [2, 3]]]
+    # ... and for param value mapping:
+    conn.exec_params("SELECT $1::text, $2::text, $3::text", [1, Time.now, [2,3]]).values
+        # => [["1", "2014-04-17 22:58:47.101513+02", "{2,3}"]]
+
+Pg's type casting is highly customizable. That's why it's divided into
+4 layers:
+
+=== Encoders / Decoders (ext/pg_*coder.c, lib/pg/*coder.rb)
+
+This is the lowest layer, containing encoding functions that convert Ruby
+objects for transmission to the DBMS and decoding functions to convert
+received data back to Ruby objects. The C-functions are reachable from Ruby
+in namespaces PG::TextEncoder, PG::TextDecoder, PG::BinaryEncoder and
+PG::BinaryDecoder. They can be assigned to a PG::Type object.
+
+=== PG::Type (ext/pg_type.c)
+
+A PG::Type object binds an encoding and a decoding function, a type OID,
+format code (text or binary) and optionally a name together.
+A PG::CompositeType in addition defines the PG::Type that should be used
+for en-/decoding of it's elements. Type objects can be used to convert
+single values to/from their string representation and to build
+PG::ColumnMapping objects.
+
+=== PG::ColumnMapping (ext/pg_column_mapping.c)
+
+A ColumnMapping combines multiple types together, suitable to convert the
+input or result values of a given query. ColumnMappings are in particular
+useful in conjunction with prepared statements, since they can be cached
+alongside with the statement handle.
+
+=== PG::BasicTypeMapping (lib/pg/basic_type_mapping.rb)
+
+A type mapping defines the logic to select which Ruby type is converted to
+which text/binary representation and OID for query params and vice versa
+for result values.
+It builds a ColumnMapping out of a given set of query parameters or a given
+PG::Result object. PG itself defines BasicTypeMapping, that could be extended
+or replaced in order to define customized conversion rules.
+
+With Connection#type_mapping= a connection wide default type mapping can be
+set. A type mapping can also be used as alternative for parameters accepting
+PG::ColumnMapping. In both cases the a ColumnMapping is built on the fly,
+which is obviously somewhat slower than using a prepared or cached
+PG::ColumnMapping.
+
+
 == Contributing
 
 To report bugs, suggest features, or check out the source with Mercurial,

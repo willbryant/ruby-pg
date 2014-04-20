@@ -19,7 +19,7 @@ end
 module PG
 
 	# Library version
-	VERSION = '0.17.1'
+	VERSION = '0.18.0'
 
 	# VCS revision
 	REVISION = %q$Revision$
@@ -43,6 +43,12 @@ module PG
 
 	require 'pg/exceptions'
 	require 'pg/constants'
+	require 'pg/type'
+	require 'pg/coder'
+	require 'pg/text_encoder'
+	require 'pg/text_decoder'
+	require 'pg/basic_type_mapping'
+	require 'pg/column_mapping'
 	require 'pg/connection'
 	require 'pg/result'
 

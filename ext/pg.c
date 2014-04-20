@@ -541,5 +541,12 @@ Init_pg_ext()
 	init_pg_connection();
 	init_pg_result();
 	init_pg_errors();
+	init_pg_column_mapping();
+	init_pg_type();
+	init_pg_coder();
+	init_pg_text_encoder();
+	init_pg_text_decoder();
+	init_pg_binary_encoder();
+	init_pg_binary_decoder();
 }
 
