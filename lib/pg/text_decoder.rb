@@ -7,7 +7,7 @@ module PG
 
 			def self.call(string, tuple, field)
 				if string =~ ISO_DATE
-					Time.new $1.to_i, $2.to_i, $3.to_i
+					::Date.new $1.to_i, $2.to_i, $3.to_i
 				else
 					raise ArgumentError, sprintf("unexpected time format for tuple %d field %d: %s", tuple, field, string)
 				end
